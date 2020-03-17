@@ -113,6 +113,8 @@ func InitTestnet(
 		chainID = "chain-" + tmrand.NewRand().Str(6)
 	}
 
+	entropy := tmrand.NewRand().Str(256)
+
 	monikers := make([]string, numValidators)
 	nodeIDs := make([]string, numValidators)
 	valPubKeys := make([]crypto.PubKey, numValidators)
@@ -242,14 +244,13 @@ func InitTestnet(
 		srvconfig.WriteConfigFile(gaiaConfigFilePath, gaiaConfig)
 	}
 
-	if err := initGenFiles(cdc, mbm, chainID, genAccounts, genBalances, genFiles, numValidators); err != nil {
+	if err := initGenFiles(cdc, mbm, chainID, genAccounts, genBalances, genFiles, numValidators, entropy); err != nil {
 		return err
 	}
 
 	err := collectGenFiles(
 		cdc, config, chainID, monikers, nodeIDs, valPubKeys, numValidators,
-		outputDir, nodeDirPrefix, nodeDaemonHome, genBalIterator,
-	)
+		outputDir, nodeDirPrefix, nodeDaemonHome, genBalIterator)
 	if err != nil {
 		return err
 	}
@@ -261,7 +262,7 @@ func InitTestnet(
 func initGenFiles(
 	cdc *codec.Codec, mbm module.BasicManager, chainID string,
 	genAccounts []authexported.GenesisAccount, genBalances []bank.Balance,
-	genFiles []string, numValidators int,
+	genFiles []string, numValidators int, entropy string,
 ) error {
 
 	appGenState := mbm.DefaultGenesis(cdc)
@@ -289,6 +290,7 @@ func initGenFiles(
 		ChainID:    chainID,
 		AppState:   appGenStateJSON,
 		Validators: nil,
+		Entropy:    entropy,
 	}
 
 	// generate empty genesis files for each validator and save
@@ -340,7 +342,7 @@ func collectGenFiles(
 		genFile := config.GenesisFile()
 
 		// overwrite each validator's genesis file to have a canonical genesis time
-		if err := genutil.ExportGenesisFileWithTime(genFile, chainID, nil, appState, genTime); err != nil {
+		if err := genutil.ExportGenesisFileWithTime(genFile, chainID, nil, appState, genTime, genDoc.Entropy); err != nil {
 			return err
 		}
 	}

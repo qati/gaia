@@ -19,6 +19,7 @@ import (
 	abci "github.com/tendermint/tendermint/abci/types"
 	"github.com/tendermint/tendermint/libs/cli"
 	"github.com/tendermint/tendermint/libs/log"
+	tmrand "github.com/tendermint/tendermint/libs/rand"
 	tmtypes "github.com/tendermint/tendermint/types"
 	dbm "github.com/tendermint/tm-db"
 
@@ -38,6 +39,11 @@ func main() {
 	config.SetBech32PrefixForValidator(sdk.Bech32PrefixValAddr, sdk.Bech32PrefixValPub)
 	config.SetBech32PrefixForConsensusNode(sdk.Bech32PrefixConsAddr, sdk.Bech32PrefixConsPub)
 	config.Seal()
+
+	if viper.GetString(flags.FlagGenesisEntropy) == "" {
+		entropy := tmrand.NewRand().Str(256)
+		viper.Set(flags.FlagGenesisEntropy, entropy)
+	}
 
 	ctx := server.NewDefaultContext()
 	cobra.EnableCommandSorting = false
