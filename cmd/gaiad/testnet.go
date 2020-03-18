@@ -4,11 +4,13 @@ package main
 
 import (
 	"bufio"
+	gobytes "bytes"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -95,7 +97,6 @@ Example:
 		server.FlagMinGasPrices, fmt.Sprintf("0.000006%s", sdk.DefaultBondDenom),
 		"Minimum gas prices to accept for transactions; All fees in a tx must meet this minimum (e.g. 0.01photino,0.001stake)")
 	cmd.Flags().String(flags.FlagKeyringBackend, flags.DefaultKeyringBackend, "Select keyring's backend (os|file|test)")
-
 	return cmd
 }
 
@@ -129,6 +130,46 @@ func InitTestnet(
 		genFiles    []string
 	)
 
+	entropyValidators := make(types.ValidatorsByAddress, numValidators)
+	for i := 0; i < numValidators; i++ {
+		nodeDirName := fmt.Sprintf("%s%d", nodeDirPrefix, i)
+		nodeDir := filepath.Join(outputDir, nodeDirName, nodeDaemonHome)
+
+		if err := os.MkdirAll(filepath.Join(nodeDir, "config"), nodeDirPerm); err != nil {
+			_ = os.RemoveAll(outputDir)
+			return err
+		}
+
+		config.SetRoot(nodeDir)
+		config.RPC.ListenAddress = "tcp://0.0.0.0:26657"
+		var err error
+		nodeIDs[i], valPubKeys[i], err = genutil.InitializeNodeValidatorFiles(config)
+		if err != nil {
+			_ = os.RemoveAll(outputDir)
+			return err
+		}
+
+		entropyValidators[i] = &types.Validator{Address: valPubKeys[i].Address()}
+	}
+
+	sort.Sort(entropyValidators)
+	for i := 0; i < numValidators; i++ {
+		address := entropyValidators[i].Address
+		idx := sort.Search(len(entropyValidators), func(i int) bool {
+			return gobytes.Compare(address, entropyValidators[i].Address) <= 0
+		})
+		if idx < len(entropyValidators) && gobytes.Equal(entropyValidators[idx].Address, address) {
+			err := moveEntropyFile(config, numValidators, nodeDirPrefix, outputDir, idx, i)
+			swapString(nodeIDs, idx, i)
+			swapKey(valPubKeys, idx, i)
+			if err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("genValidators and entropyValidators mismatch")
+		}
+	}
+
 	inBuf := bufio.NewReader(cmd.InOrStdin())
 	// generate private keys, node IDs, and initial transactions
 	for i := 0; i < numValidators; i++ {
@@ -140,11 +181,6 @@ func InitTestnet(
 		config.SetRoot(nodeDir)
 		config.RPC.ListenAddress = "tcp://0.0.0.0:26657"
 
-		if err := os.MkdirAll(filepath.Join(nodeDir, "config"), nodeDirPerm); err != nil {
-			_ = os.RemoveAll(outputDir)
-			return err
-		}
-
 		if err := os.MkdirAll(clientDir, nodeDirPerm); err != nil {
 			_ = os.RemoveAll(outputDir)
 			return err
@@ -154,12 +190,6 @@ func InitTestnet(
 		config.Moniker = nodeDirName
 
 		ip, err := getIP(i, startingIPAddress)
-		if err != nil {
-			_ = os.RemoveAll(outputDir)
-			return err
-		}
-
-		nodeIDs[i], valPubKeys[i], err = genutil.InitializeNodeValidatorFiles(config)
 		if err != nil {
 			_ = os.RemoveAll(outputDir)
 			return err
@@ -389,4 +419,38 @@ func writeFile(name string, dir string, contents []byte) error {
 	}
 
 	return nil
+}
+
+func moveEntropyFile(config *tmconfig.Config, nValidators int, nodeDirPrefix, outputDir string, entropyIndex int, nodeIndex int) error {
+	relevantIndex := entropyIndex
+	// Check if node is validator
+	if nodeIndex >= nValidators {
+		relevantIndex = nodeIndex
+	}
+	oldEntropyFile := filepath.Join(outputDir, fmt.Sprintf("%d.txt", relevantIndex))
+	_, findFileErr := os.Stat(oldEntropyFile)
+	if os.IsNotExist(findFileErr) {
+		return fmt.Errorf("entropy key file %v does not exist", oldEntropyFile)
+	}
+	newEntropyFile := filepath.Join(filepath.Join(outputDir, fmt.Sprintf("%s%d", nodeDirPrefix, nodeIndex)), config.EntropyKey)
+	// Move key file into correct directory
+	return os.Rename(oldEntropyFile, newEntropyFile)
+}
+
+func swapString(l []string, i1, i2 int) {
+	if i1 >= len(l) || i1 < 0 || i2 >= len(l) || i2 < 0 {
+		return
+	}
+	e1 := l[i1]
+	l[i1] = l[i2]
+	l[i2] = e1
+}
+
+func swapKey(l []crypto.PubKey, i1, i2 int) {
+	if i1 >= len(l) || i1 < 0 || i2 >= len(l) || i2 < 0 {
+		return
+	}
+	e1 := l[i1]
+	l[i1] = l[i2]
+	l[i2] = e1
 }
